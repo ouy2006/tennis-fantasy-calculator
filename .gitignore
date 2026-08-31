@@ -1,0 +1,16 @@
+# 의존성 · 빌드 산출물
+e2e/node_modules/
+e2e/report/
+e2e/screenshots/
+e2e/test-results/
+dist/
+
+# 도구 부산물
+.visualizations/
+**/__pycache__/
+*.bak
+*.pyc
+
+# 대체된 문서
+prd.v1.0.backup.md
+mockup.html

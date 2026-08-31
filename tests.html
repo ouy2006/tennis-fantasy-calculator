@@ -1,0 +1,378 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>테니스판타지 계산기 자동 테스트</title>
+  <style>
+    :root { color-scheme: light; --ink:#17231d; --muted:#64726b; --line:#dbe5df; --ok:#16734a; --bad:#b42318; --paper:#fff; --wash:#f2f7f4; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--wash); color:var(--ink); font:14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    main { width:min(1160px,calc(100% - 32px)); margin:36px auto; }
+    h1 { margin:0 0 6px; font-size:28px; }
+    p { color:var(--muted); margin:0 0 20px; }
+    #summary { padding:20px 24px; border-radius:16px; background:var(--paper); border:1px solid var(--line); font-size:24px; font-weight:800; margin-bottom:18px; }
+    #summary.pass { border-color:#9bd2b8; color:var(--ok); }
+    #summary.fail { border-color:#f2a7a0; color:var(--bad); }
+    .table-wrap { overflow:auto; background:var(--paper); border:1px solid var(--line); border-radius:16px; }
+    table { width:100%; border-collapse:collapse; min-width:820px; }
+    th,td { padding:11px 14px; text-align:left; vertical-align:top; border-bottom:1px solid var(--line); }
+    th { position:sticky; top:0; background:#e9f1ec; }
+    tr:last-child td { border-bottom:0; }
+    .ok { color:var(--ok); font-weight:800; }
+    .bad { color:var(--bad); font-weight:800; }
+    code { white-space:pre-wrap; word-break:break-word; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>계산 모듈 자동 테스트</h1>
+    <p>외부 프레임워크와 운영 가격·공휴일 데이터 없이 TC-01~TC-27을 실행합니다.</p>
+    <div id="summary" role="status" aria-live="polite">실행 중…</div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>테스트</th><th>단언</th><th>기대값</th><th>실제값</th><th>결과</th></tr></thead>
+        <tbody id="results"></tbody>
+      </table>
+    </div>
+  </main>
+  <script src="calc.js"></script>
+  <script>
+    (function () {
+      "use strict";
+
+      var rows = [];
+      var executedIds = [];
+      var currentId = "";
+      var currentTitle = "";
+
+      function display(value) {
+        if (typeof value === "string") return value;
+        try { return JSON.stringify(value); } catch (_) { return String(value); }
+      }
+
+      function same(actual, expected) {
+        return display(actual) === display(expected);
+      }
+
+      function assertEqual(label, actual, expected) {
+        rows.push({ id: currentId, title: currentTitle, label: label, expected: display(expected), actual: display(actual), pass: same(actual, expected) });
+      }
+
+      function assertTrue(label, actual) {
+        assertEqual(label, Boolean(actual), true);
+      }
+
+      function hasWarning(result, code) {
+        return result.warnings.some(function (item) { return item.code === code; });
+      }
+
+      function run(id, title, callback) {
+        currentId = id;
+        currentTitle = title;
+        executedIds.push(id);
+        try { callback(); }
+        catch (caught) { rows.push({ id:id, title:title, label:"예외 없이 실행", expected:"예외 없음", actual:caught && caught.message, pass:false }); }
+      }
+
+      function input(overrides) {
+        return Object.assign({
+          targetMonth:"2026-09", branchId:"banpo", productId:"sample",
+          pricingModel:"monthly4week", weeklyFrequency:2, selectedWeekdays:[2,4],
+          manualExcludedDates:[], manualIncludedDates:[],
+          baseMonthlyFee:200000, appliedMonthlyFee:200000, finalFeeOverride:null,
+          memberName:"", adjustmentReason:""
+        }, overrides || {});
+      }
+
+      function holiday(date, kind, name) {
+        return { date:date, kind:kind, name:name || "합성 휴일" };
+      }
+
+      run("TC-01", "일반 월의 예정 수업 횟수", function () {
+        var result = TFCalc.calculate(input(), []);
+        assertEqual("예정 수업일", result.scheduledDates.length, 9);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 9);
+        assertEqual("기준 횟수", result.baseSessionCount, 8);
+        assertEqual("기준 초과 횟수", result.overBaseCount, 1);
+        assertTrue("N-OVER-BASE 안내", hasWarning(result,"N-OVER-BASE"));
+      });
+
+      run("TC-02", "일반 공휴일 제외", function () {
+        var result = TFCalc.calculate(input(), [holiday("2026-09-22","regular","합성 일반공휴일")]);
+        assertEqual("일반 공휴일 제외", result.regularHolidayExclusions, ["2026-09-22"]);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 8);
+        assertEqual("기준 요금 직접 사용", result.usedBaseFeeDirectly, true);
+        assertTrue("N-BASE-MATCH 안내", hasWarning(result,"N-BASE-MATCH"));
+      });
+
+      run("TC-03", "대체공휴일 포함", function () {
+        var result = TFCalc.calculate(input(), [holiday("2026-09-22","substitute","합성 대체공휴일")]);
+        assertEqual("자동 제외", result.regularHolidayExclusions.length, 0);
+        assertEqual("대체공휴일 정상 포함", result.includedSpecialHolidays, ["2026-09-22"]);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 9);
+        assertTrue("N-SPECIAL-HOLIDAY 안내", hasWarning(result,"N-SPECIAL-HOLIDAY"));
+      });
+
+      run("TC-04", "임시공휴일 포함", function () {
+        var result = TFCalc.calculate(input(), [holiday("2026-09-22","temporary","합성 임시공휴일")]);
+        assertEqual("자동 제외", result.regularHolidayExclusions.length, 0);
+        assertEqual("임시공휴일 정상 포함", result.includedSpecialHolidays, ["2026-09-22"]);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 9);
+      });
+
+      run("TC-05", "추가 제외일 우선", function () {
+        var result = TFCalc.calculate(input({manualExcludedDates:["2026-09-22"]}), [holiday("2026-09-22","substitute")]);
+        assertEqual("수동 제외", result.manualExclusions, ["2026-09-22"]);
+        assertEqual("특수 공휴일 유효 포함", result.includedSpecialHolidays.length, 0);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 8);
+      });
+
+      run("TC-06", "중복 제외 방지", function () {
+        var result = TFCalc.calculate(input({manualExcludedDates:["2026-09-22"]}), [holiday("2026-09-22","regular")]);
+        assertEqual("전체 제외 중복 제거", result.excludedDates, ["2026-09-22"]);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 8);
+        assertEqual("유효 목록 중복 없음", new Set(result.validSessionDates).size, result.validSessionDates.length);
+      });
+
+      run("TC-07", "월말 포함", function () {
+        var result = TFCalc.calculate(input({targetMonth:"2026-08",weeklyFrequency:1,selectedWeekdays:[1],baseMonthlyFee:100000,appliedMonthlyFee:100000}), []);
+        assertTrue("8월 31일 포함", result.scheduledDates.includes("2026-08-31"));
+        assertEqual("예정 수업일", result.scheduledDates.length, 5);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 5);
+      });
+
+      run("TC-08", "일요일 정상 수업", function () {
+        var result = TFCalc.calculate(input({targetMonth:"2026-08",weeklyFrequency:1,selectedWeekdays:[0],baseMonthlyFee:100000,appliedMonthlyFee:100000}), []);
+        assertEqual("예정 일요일", result.scheduledDates.length, 5);
+        assertEqual("자동 제외 없음", result.excludedDates.length, 0);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 5);
+      });
+
+      run("TC-09", "5주차 초과와 100원 절사", function () {
+        var result = TFCalc.calculate(input({weeklyFrequency:3,selectedWeekdays:[1,3,5],baseMonthlyFee:250000,appliedMonthlyFee:250000}), []);
+        assertEqual("예정 수업일", result.scheduledDates.length, 13);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 13);
+        assertEqual("기준 횟수", result.baseSessionCount, 12);
+        assertEqual("회당 금액", result.unitFee, 20833);
+        assertEqual("절사 전 금액", result.computedFeeRaw, 270829);
+        assertEqual("계산 금액", result.computedFee, 270800);
+        assertEqual("절사 차액", result.roundingDelta, 29);
+        assertTrue("N-OVER-BASE 안내", hasWarning(result,"N-OVER-BASE"));
+        assertTrue("N-ROUNDED 안내", hasWarning(result,"N-ROUNDED"));
+      });
+
+      run("TC-10", "유효 수업 0회", function () {
+        var all = ["2026-09-01","2026-09-08","2026-09-15","2026-09-22","2026-09-29"];
+        var result = TFCalc.calculate(input({weeklyFrequency:1,selectedWeekdays:[2],baseMonthlyFee:100000,appliedMonthlyFee:100000,manualExcludedDates:all}), []);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 0);
+        assertEqual("계산 금액", result.computedFee, 0);
+        assertEqual("최종 금액", result.finalFee, 0);
+        assertEqual("정상 결과 객체", typeof result, "object");
+      });
+
+      run("TC-11", "요일 수 불일치", function () {
+        var validation = TFCalc.validateInput(input({selectedWeekdays:[2]}));
+        assertEqual("입력 검증 차단", validation.ok, false);
+        assertTrue("E-WEEKDAYS 코드", validation.errors.some(function (item) { return item.code === "E-WEEKDAYS"; }));
+        assertTrue("정확한 안내 문구", validation.errors.some(function (item) { return item.message === "주 2회 수업은 요일 2개를 선택해야 합니다."; }));
+      });
+
+      run("TC-12", "공휴일 데이터 없음", function () {
+        var noDataInput = input({noHolidayData:true});
+        var result = TFCalc.calculate(noDataInput, []);
+        var internal = TFCalc.buildInternalReport(noDataInput,result,{branchName:"반포점",productLabel:"샘플",noHolidayData:true});
+        var member = TFCalc.buildMemberMessage(noDataInput,result,{branchName:"반포점",productLabel:"샘플",noHolidayData:true});
+        assertTrue("N-NO-HOLIDAY-DATA 안내", hasWarning(result,"N-NO-HOLIDAY-DATA"));
+        assertTrue("내부 문구 경고", internal.includes("2026년 공휴일 데이터 없이 계산한 결과입니다"));
+        assertTrue("회원 문구 경고", member.includes("공휴일 반영 전 안내입니다"));
+      });
+
+      run("TC-13", "지점 가격 격리", function () {
+        var sampleData = {schemaVersion:2,currency:"KRW",source:"합성 데이터",updatedAt:"2026-01-01",branches:[
+          {id:"banpo",name:"반포점",sourceTitle:"반포",effectiveFrom:"2026-01-01",products:[{id:"same",label:"같은 ID",monthlyFees:{"1":100000}}]},
+          {id:"bangbae",name:"방배점",sourceTitle:"방배",effectiveFrom:"2026-01-01",products:[{id:"same",label:"같은 ID",monthlyFees:{"1":150000}}]}
+        ]};
+        assertEqual("지점 간 동일 상품 ID 허용", TFCalc.validatePriceData(sampleData).ok, true);
+        assertEqual("반포 금액", sampleData.branches[0].products[0].monthlyFees["1"], 100000);
+        assertEqual("방배 금액", sampleData.branches[1].products[0].monthlyFees["1"], 150000);
+        assertTrue("지점별 금액 차이", sampleData.branches[0].products[0].monthlyFees["1"] !== sampleData.branches[1].products[0].monthlyFees["1"]);
+      });
+
+      run("TC-14", "금액 조정 계산 독립성", function () {
+        var adjusted = TFCalc.calculate(input({appliedMonthlyFee:180000,memberName:"가나다",adjustmentReason:"테스트"}), []);
+        var personalChanged = TFCalc.calculate(input({appliedMonthlyFee:180000,memberName:"다른 회원",adjustmentReason:"다른 사유"}), []);
+        var conditionChanged = TFCalc.calculate(input({weeklyFrequency:1,selectedWeekdays:[2],baseMonthlyFee:100000,appliedMonthlyFee:100000}), []);
+        assertEqual("회원명 변경 계산값 유지", personalChanged.computedFee, adjusted.computedFee);
+        assertEqual("사유 변경 계산값 유지", personalChanged.finalFee, adjusted.finalFee);
+        assertTrue("조건 변경 계산값 갱신", conditionChanged.computedFee !== adjusted.computedFee);
+      });
+
+      run("TC-15", "복사 문구 개인정보 처리", function () {
+        var reportInput = input({adjustmentReason:"내부 전용 사유"});
+        var result = TFCalc.calculate(reportInput, []);
+        var internal = TFCalc.buildInternalReport(reportInput,result,{branchName:"반포점",productLabel:"샘플"});
+        var member = TFCalc.buildMemberMessage(reportInput,result,{branchName:"반포점",productLabel:"샘플"});
+        assertTrue("내부 문구에 사유 포함", internal.includes("내부 전용 사유"));
+        assertEqual("회원 문구에 사유 미포함", member.includes("내부 전용 사유"), false);
+        assertTrue("회원명 미입력 자연스러운 표현", member.includes("회원님의 2026년 9월"));
+      });
+
+      run("TC-16", "기준 횟수 일치 시 기준 요금", function () {
+        var result = TFCalc.calculate(input({weeklyFrequency:3,selectedWeekdays:[1,3,5],baseMonthlyFee:250000,appliedMonthlyFee:250000}), [holiday("2026-09-16","regular")]);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 12);
+        assertEqual("계산 금액", result.computedFee, 250000);
+        assertEqual("기준 요금 직접 사용", result.usedBaseFeeDirectly, true);
+        assertEqual("절사 차액", result.roundingDelta, 0);
+        assertTrue("N-BASE-MATCH 안내", hasWarning(result,"N-BASE-MATCH"));
+      });
+
+      run("TC-17", "기준 미달과 100원 절사", function () {
+        var result = TFCalc.calculate(input({weeklyFrequency:3,selectedWeekdays:[1,3,5],baseMonthlyFee:250000,appliedMonthlyFee:250000}), [holiday("2026-09-16","regular"),holiday("2026-09-23","regular")]);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 11);
+        assertEqual("절사 전 금액", result.computedFeeRaw, 229163);
+        assertEqual("계산 금액", result.computedFee, 229100);
+        assertTrue("N-UNDER-BASE 안내", hasWarning(result,"N-UNDER-BASE"));
+        assertTrue("N-ROUNDED 안내", hasWarning(result,"N-ROUNDED"));
+      });
+
+      run("TC-18", "추가 포함일 공휴일 복구", function () {
+        var result = TFCalc.calculate(input({manualIncludedDates:["2026-09-22"]}), [holiday("2026-09-22","regular")]);
+        assertEqual("자동 제외 무효", result.regularHolidayExclusions.length, 0);
+        assertEqual("공휴일 복구 목록", result.manualInclusionsRestored, ["2026-09-22"]);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 9);
+      });
+
+      run("TC-19", "추가 포함일 보강", function () {
+        var result = TFCalc.calculate(input({manualIncludedDates:["2026-09-25"]}), []);
+        assertEqual("예정 수업일 불변", result.scheduledDates.length, 9);
+        assertEqual("보강 목록", result.manualInclusionsMakeup, ["2026-09-25"]);
+        assertEqual("유효 수강 횟수", result.validSessionCount, 10);
+        assertEqual("유효 목록 정렬", result.validSessionDates.slice().sort(), result.validSessionDates);
+      });
+
+      run("TC-20", "조정일 중복 금지", function () {
+        var validation = TFCalc.validateInput(input({manualExcludedDates:["2026-09-22"],manualIncludedDates:["2026-09-22"]}));
+        assertEqual("중복 입력 차단", validation.ok, false);
+        assertTrue("E-ADJUST-DUP 코드", validation.errors.some(function (item) { return item.code === "E-ADJUST-DUP"; }));
+        assertEqual("양쪽 동시 상태 검출", new Set(["2026-09-22","2026-09-22"]).size, 1);
+      });
+
+      run("TC-21", "포함일 무효 지정", function () {
+        var result = TFCalc.calculate(input({manualIncludedDates:["2026-09-08"]}), []);
+        assertEqual("유효 수강 횟수 불변", result.validSessionCount, 9);
+        assertEqual("무효 포함 목록", result.manualInclusionsNoop, ["2026-09-08"]);
+        assertEqual("유효 목록 중복 없음", new Set(result.validSessionDates).size, result.validSessionDates.length);
+        assertTrue("N-INCLUSION-NOOP 안내", hasWarning(result,"N-INCLUSION-NOOP"));
+      });
+
+      run("TC-22", "다음 회원 계산값 재설정 기반", function () {
+        var before = input({memberName:"홍길동",adjustmentReason:"개별 사유",finalFeeOverride:123400});
+        var after = Object.assign({},before,{memberName:"",adjustmentReason:"",finalFeeOverride:null,appliedMonthlyFee:before.baseMonthlyFee});
+        var result = TFCalc.calculate(after, []);
+        assertEqual("회원명 비움", after.memberName, "");
+        assertEqual("조정 사유 비움", after.adjustmentReason, "");
+        assertEqual("공통 월 유지", after.targetMonth, before.targetMonth);
+        assertEqual("공통 요일 유지", after.selectedWeekdays, before.selectedWeekdays);
+        assertEqual("최종 금액 자동 계산값", result.finalFee, result.computedFee);
+      });
+
+      run("TC-23", "가격 모델 분기", function () {
+        var common = {weeklyFrequency:3,selectedWeekdays:[1,3,5]};
+        var monthly = TFCalc.calculate(input(Object.assign({},common,{pricingModel:"monthly4week",baseMonthlyFee:250000,appliedMonthlyFee:250000})), []);
+        var perSession = TFCalc.calculate(input(Object.assign({},common,{pricingModel:"perSession",baseMonthlyFee:20000,appliedMonthlyFee:20000})), []);
+        var flat = TFCalc.calculate(input(Object.assign({},common,{pricingModel:"flatMonthly",baseMonthlyFee:250000,appliedMonthlyFee:250000})), []);
+        assertEqual("monthly4week 금액", monthly.computedFee, 270800);
+        assertEqual("perSession 회당 금액", perSession.unitFee, 20000);
+        assertEqual("perSession 금액", perSession.computedFee, 260000);
+        assertEqual("flatMonthly 금액", flat.computedFee, 250000);
+        assertEqual("flatMonthly 절사 미적용", flat.usedBaseFeeDirectly, true);
+      });
+
+      run("TC-24", "UTC 파싱 방지", function () {
+        var result = TFCalc.calculate(input({weeklyFrequency:1,selectedWeekdays:[2],baseMonthlyFee:100000,appliedMonthlyFee:100000}), []);
+        assertEqual("2026-09-01 요일", TFCalc.localWeekday("2026-09-01"), 2);
+        assertEqual("날짜 표시", TFCalc.formatDate("2026-09-01"), "2026-09-01(화)");
+        assertEqual("첫 예정 수업일", result.scheduledDates[0], "2026-09-01");
+      });
+
+      run("TC-25", "월 정액 대여비 합산", function () {
+        var base = {weeklyFrequency:2,selectedWeekdays:[2,4],baseMonthlyFee:340000,appliedMonthlyFee:340000};
+        var locker = {id:"locker",label:"라커 대여",monthlyFee:10000};
+        var racket = {id:"racket",label:"라켓 대여",monthlyFee:10000};
+
+        var none = TFCalc.calculate(input(Object.assign({}, base, {rentals:[]})), []);
+        assertEqual("대여 없음 · 수강료", none.computedFee, 382500);
+        assertEqual("대여 없음 · 대여비", none.rentalTotal, 0);
+        assertEqual("대여 없음 · 합계", none.subtotal, 382500);
+        assertEqual("대여 없음 · 최종", none.finalFee, 382500);
+
+        var one = TFCalc.calculate(input(Object.assign({}, base, {rentals:[locker]})), []);
+        assertEqual("라커만 · 대여비", one.rentalTotal, 10000);
+        assertEqual("라커만 · 합계", one.subtotal, 392500);
+
+        var both = TFCalc.calculate(input(Object.assign({}, base, {rentals:[locker, racket]})), []);
+        assertEqual("라커+라켓 · 대여비", both.rentalTotal, 20000);
+        assertEqual("라커+라켓 · 합계", both.subtotal, 402500);
+        assertEqual("라커+라켓 · 최종", both.finalFee, 402500);
+        assertEqual("수강료는 변하지 않음", both.computedFee, 382500);
+        assertEqual("N-RENTAL 안내", both.warnings.some(function (w) { return w.code === "N-RENTAL"; }), true);
+        assertEqual("rentals 목록 개수", both.rentals.length, 2);
+      });
+
+      run("TC-26", "대여비는 수업 횟수에 비례하지 않음", function () {
+        var locker = {id:"locker",label:"라커 대여",monthlyFee:10000};
+        // 예정 수업일 전부를 수동 제외해 유효 0회로 만든다
+        var all = ["2026-09-01","2026-09-08","2026-09-15","2026-09-22","2026-09-29"];
+        var zero = TFCalc.calculate(input({weeklyFrequency:1,selectedWeekdays:[2],
+          baseMonthlyFee:180000,appliedMonthlyFee:180000,
+          manualExcludedDates:all,rentals:[locker]}), []);
+        assertEqual("유효 수강 횟수", zero.validSessionCount, 0);
+        assertEqual("수강료 0원", zero.computedFee, 0);
+        assertEqual("대여비는 그대로 부과", zero.rentalTotal, 10000);
+        assertEqual("합계는 대여비만", zero.subtotal, 10000);
+      });
+
+      run("TC-27", "대여비가 두 복사 문구에 표시됨", function () {
+        var locker = {id:"locker",label:"라커 대여",monthlyFee:10000};
+        var inp = input({weeklyFrequency:2,selectedWeekdays:[2,4],
+          baseMonthlyFee:340000,appliedMonthlyFee:340000,
+          memberName:"김테니스",adjustmentReason:"내부 메모",rentals:[locker]});
+        var res = TFCalc.calculate(inp, []);
+        var meta = {branchName:"방배점",productLabel:"1:1 · 평일",effectiveFrom:"2024-03-16",memberName:"김테니스"};
+        var internal = TFCalc.buildInternalReport(inp, res, meta);
+        var member = TFCalc.buildMemberMessage(inp, res, meta);
+        assertEqual("계산 내역에 대여 항목", internal.indexOf("라커 대여") !== -1, true);
+        assertEqual("계산 내역에 합산식", internal.indexOf("대여비 10,000원 = 392,500원") !== -1, true);
+        assertEqual("회원 문구에 대여 항목", member.indexOf("- 라커 대여: 10,000원") !== -1, true);
+        assertEqual("회원 문구에 합계", member.indexOf("- 합계: 392,500원") !== -1, true);
+        assertEqual("회원 문구에 조정 사유 미포함", member.indexOf("내부 메모") === -1, true);
+      });
+
+      var body = document.getElementById("results");
+      rows.forEach(function (row) {
+        var tr = document.createElement("tr");
+        [row.id + " · " + row.title,row.label,row.expected,row.actual,row.pass ? "통과" : "실패"].forEach(function (value,index) {
+          var cell = document.createElement(index === 0 ? "th" : "td");
+          if (index === 4) cell.className = row.pass ? "ok" : "bad";
+          var code = document.createElement("code");
+          code.textContent = value;
+          cell.appendChild(code);
+          tr.appendChild(cell);
+        });
+        body.appendChild(tr);
+      });
+      var passed = rows.filter(function (row) { return row.pass; }).length;
+      var failed = rows.length - passed;
+      var uniqueIds = Array.from(new Set(executedIds));
+      var summary = document.getElementById("summary");
+      summary.dataset.pass = String(passed);
+      summary.dataset.total = String(rows.length);
+      summary.dataset.failed = String(failed);
+      summary.dataset.tcIds = uniqueIds.join(",");
+      summary.className = failed ? "fail" : "pass";
+      summary.textContent = "통과 " + passed + " / 전체 " + rows.length + (failed ? " · 실패 " + failed : " · 모두 통과");
+    })();
+  </script>
+</body>
+</html>
