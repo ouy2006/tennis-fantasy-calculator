@@ -2,7 +2,7 @@
 
 기준: `prd.md` v1.2, `프롬프트1.md` v1.1  
 최종 갱신: 2026-10-01  
-상태 기준: `tests.html` TC-01~TC-29 통과, Playwright S-01~S-49 통과 (아래 표의 줄 번호는 2026-08-30 기준)
+상태 기준: `tests.html` TC-01~TC-29 통과, Playwright S-01~S-51 통과 (아래 표의 줄 번호는 2026-08-30 기준)
 
 ## 요구사항 매트릭스 — FR 18개
 
@@ -186,8 +186,12 @@
 | 두 복사 문구의 등록 할인 줄 | `calc.js` `buildInternalReport`, `buildMemberMessage` | TC-28, S-46 | 통과 |
 | 할인 위 수동 조정·초기화·다음 회원 | `index.html` `syncFeeAuto`, `nextMember` | S-47 | 통과 |
 | 375px 모바일 등록 기간 표시 | `index.html` | S-48 | 통과 |
-| 반포점 가격 불변 | `prices.js` 반포점 | S-49 | 통과 |
-| `registrationDiscounts`·`registrationDiscount` 검증 (`E-REGISTRATION`) | `calc.js` `validatePriceData`, `validateInput` | TC-29 | 통과 |
+| 반포점 가격 22칸 불변 | `prices.js` 반포점 | S-49 | 통과 |
+| 등록 기간 변경 시 수동 조정 항상 초기화(금액이 같아도) | `index.html` `selectRegistration`, `resetFeeAdjustments` | S-50 | 통과 |
+| 적용 요금·최종 결제액 수동 조정 시 복사 문구·화면 안내 구분, 대여비 포함 회원 문구 합계 일치 | `calc.js` `buildInternalReport`, `buildMemberMessage`, `index.html` `renderNotices` | TC-27, TC-28, S-51 | 통과 |
+| 지점·상품·대여·할인·요일 배열의 빈 칸(연속 쉼표) 차단 | `calc.js` `validatePriceData` | TC-29 | 통과 |
+| 가격 데이터 `registrationDiscounts` 검증 (`E-DATA-PRICE-SCHEMA`) | `calc.js` `validatePriceData` | TC-29 | 통과 |
+| 계산 입력 `registrationDiscount` 검증 (`E-REGISTRATION`) | `calc.js` `validateInput` | TC-29 | 통과 |
 | 안내 코드 `N-REGISTRATION-DISCOUNT` | `index.html` `renderNotices` | S-45 | 통과 |
 
 같은 날 S-01~S-41의 상품 ID·금액을 샘플 데이터에서 실제 가격표(반포점 `l30-1v1-weekday` 등)로 맞췄다. S-32는 TC-01~TC-29를 확인한다.

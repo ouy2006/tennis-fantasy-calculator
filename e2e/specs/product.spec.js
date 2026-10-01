@@ -741,18 +741,112 @@ test('S-48 · 375px 모바일에서 방배점 등록 기간 표시', async ({ pa
   await expect(page.locator('#final-fee-display')).toHaveText('324,000원');
 });
 
-test('S-49 · 반포점 가격은 방배점 개정의 영향을 받지 않음', async ({ page }) => {
+// 2026-08-30 운영자 확인을 마친 반포점 가격표 22칸 (방배점 개정 전 커밋 기준)
+const BANPO_PRICE_LIST = {
+  'l20-1v1-weekday': { 1: 160000, 2: 300000, 3: 420000 },
+  'l20-1v2-weekday': { 1: 120000, 2: 220000, 3: 318000 },
+  'l30-1v1-weekday': { 1: 240000, 2: 440000, 3: 600000 },
+  'l30-1v2-weekday': { 1: 180000, 2: 300000, 3: 380000 },
+  'l30-1v1-weekend': { 1: 260000, 2: 480000 },
+  'l30-1v2-weekend': { 1: 200000, 2: 320000 },
+  'l30-1v1-mix-wd1-we1': { 2: 460000 },
+  'l30-1v2-mix-wd1-we1': { 2: 320000 },
+  'l30-1v1-mix-wd2-we1': { 3: 660000 },
+  'l30-1v2-mix-wd2-we1': { 3: 460000 },
+  'l30-1v1-mix-wd1-we2': { 3: 700000 },
+  'l30-1v2-mix-wd1-we2': { 3: 480000 }
+};
+
+test('S-49 · 반포점 가격 22칸은 방배점 개정의 영향을 받지 않음', async ({ page }) => {
   await gotoApp(page);
   await page.locator('[data-branch="banpo"]').click();
   await expect(page.locator('#price-meta')).toContainText('가격표 시행일: 2026-07-06');
   const options = await page.locator('#product-select option').evaluateAll((nodes) => nodes.filter((node) => node.value).map((node) => node.value));
-  expect(options).toHaveLength(12);
-  const expected = { 'l20-1v1-weekday': [160000, 300000, 420000], 'l30-1v1-weekday': [240000, 440000, 600000], 'l30-1v2-weekday': [180000, 300000, 380000] };
-  for (const [id, fees] of Object.entries(expected)) {
+  expect(options).toEqual(Object.keys(BANPO_PRICE_LIST));
+  let cells = 0;
+  for (const [id, fees] of Object.entries(BANPO_PRICE_LIST)) {
     await page.locator('#product-select').selectOption(id);
     for (const frequency of [1, 2, 3]) {
-      await page.locator(`[data-frequency="${frequency}"]`).click();
-      await expect(page.locator('#applied-fee')).toHaveValue(won(fees[frequency - 1]));
+      const button = page.locator(`[data-frequency="${frequency}"]`);
+      if (fees[frequency] === undefined) { await expect(button).toBeDisabled(); continue; }
+      await button.click();
+      await expect(page.locator('#applied-fee')).toHaveValue(won(fees[frequency]));
+      cells += 1;
     }
   }
+  expect(cells).toBe(22);
+});
+
+test('S-50 · 등록 기간 변경은 금액이 같아도 수동 조정을 초기화', async ({ page }) => {
+  await gotoApp(page);
+  await selectBangbae(page);
+  // 2개월(304,000) 상태에서 적용 요금을 3개월 할인가와 같은 288,000으로 맞춘 뒤 최종 결제액을 조정
+  await page.locator('[data-registration="2"]').click();
+  await commitAmount(page, '#applied-fee', 288000);
+  await commitAmount(page, '#final-fee', 111100);
+  await expect(page.locator('#final-fee-display')).toHaveText('111,100원');
+  await page.locator('[data-registration="3"]').click();
+  await expect(page.locator('#applied-fee')).toHaveValue('288,000');
+  await expect(page.locator('#final-fee')).toHaveValue('324,000');
+  await expect(page.locator('#final-fee-display')).toHaveText('324,000원');
+  await expect(page.locator('#reset-applied')).toBeHidden();
+  await expect(page.locator('#reset-final')).toBeHidden();
+  await expect(page.locator('[data-notice-code="N-ADJUST-RESET"]')).toHaveCount(2);
+
+  // 잘못된 최종 결제액(-1)으로 막힌 상태도 등록 기간 변경으로 풀린다
+  await page.locator('#final-fee').fill('-1');
+  await page.locator('#final-fee').press('Enter');
+  await expect(page.locator('#final-error')).toBeVisible();
+  await page.locator('[data-registration="1"]').click();
+  await expect(page.locator('#error-summary')).toBeHidden();
+  await expect(page.locator('#final-fee-display')).toHaveText('360,000원');
+});
+
+test('S-51 · 수동 조정으로 할인을 상쇄하면 복사 문구가 이를 구분', async ({ page }) => {
+  await page.addInitScript(() => {
+    window.__copied = [];
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: (text) => { window.__copied.push(text); return Promise.resolve(); } } });
+  });
+  await gotoApp(page);
+  await selectBangbae(page);
+  await page.locator('[data-registration="3"]').click();
+  await commitAmount(page, '#applied-fee', 320000);
+  await expect(page.locator('#final-fee-display')).toHaveText('360,000원');
+  await expect(page.locator('#adjust-summary')).toHaveText('가격표 320,000원 → 3개월 등록 10% 할인 288,000원 (-32,000원) · 할인 적용가 288,000원 → 적용 320,000원 (+32,000원)');
+  await expect(page.locator('[data-notice-code="N-REGISTRATION-DISCOUNT"]')).toHaveText('3개월 등록 10% 할인을 선택했지만 적용 요금을 직접 조정했습니다. 할인 적용가 288,000원 대신 320,000원으로 계산합니다.');
+  await page.locator('#copy-internal').click();
+  await page.locator('#copy-member').click();
+  const copied = await page.evaluate(() => window.__copied);
+  expect(copied[0]).toContain('등록 할인: 3개월 등록 10% 할인 (할인 적용가 288,000원)');
+  expect(copied[0]).toContain('적용 월 기준 요금: 320,000원 (할인 적용가 대비 +32,000원 수동 조정)');
+  expect(copied[0]).toContain('최종 월 수강료: 360,000원');
+  expect(copied[1]).not.toContain('등록 할인');
+  expect(copied[1]).toContain('- 수강료: 360,000원');
+
+  // 적용 요금은 할인가 그대로 두고 최종 결제액만 직접 고친 경우
+  await page.locator('#reset-applied').click();
+  await expect(page.locator('#final-fee-display')).toHaveText('324,000원');
+  await page.locator('#copy-member').click();
+  await commitAmount(page, '#final-fee', 360000);
+  await page.locator('#copy-internal').click();
+  await page.locator('#copy-member').click();
+  const later = await page.evaluate(() => window.__copied);
+  expect(later[2]).toContain('- 등록 할인: 3개월 등록 10% 할인 적용');
+  expect(later[2]).toContain('- 수강료: 324,000원');
+  expect(later[3]).toContain('조정 최종 수강료: 360,000원 (+36,000원)');
+  expect(later[4]).not.toContain('등록 할인');
+  expect(later[4]).toContain('- 수강료: 360,000원');
+  await expect(page.locator('[data-notice-code="N-REGISTRATION-DISCOUNT"]')).toContainText('3개월 등록 10% 할인이 적용되었습니다.');
+
+  // 대여비가 있을 때 최종 결제액을 고쳐도 회원 문구의 항목 합이 합계와 맞는다
+  await page.locator('#reset-final').click();
+  await page.locator('[data-rental-id="locker"]').check();
+  await expect(page.locator('#final-fee-display')).toHaveText('334,000원');
+  await commitAmount(page, '#final-fee', 370000);
+  await page.locator('#copy-member').click();
+  const withRental = (await page.evaluate(() => window.__copied))[5];
+  expect(withRental).toContain('- 수강료: 360,000원');
+  expect(withRental).toContain('- 라커 대여: 10,000원');
+  expect(withRental).toContain('- 합계: 370,000원');
+  expect(withRental).not.toContain('등록 할인');
 });

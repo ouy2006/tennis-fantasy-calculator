@@ -477,12 +477,16 @@
         });
       }
 
-      function resetSelectionAfterProductChange() {
-        state.frequency = null; state.selectedWeekdays = [];
+      function resetFeeAdjustments() {
         if (state.applied.dirty) addTransientNotice("N-ADJUST-RESET","조정한 적용 요금이 초기화되었습니다.");
         if (state.final.dirty) addTransientNotice("N-ADJUST-RESET","조정한 최종 결제액이 초기화되었습니다.");
         state.applied = {auto:null,value:null,dirty:false,invalid:false};
         state.final = {auto:null,value:null,dirty:false,invalid:false};
+      }
+
+      function resetSelectionAfterProductChange() {
+        state.frequency = null; state.selectedWeekdays = [];
+        resetFeeAdjustments();
       }
 
       function selectBranch(branchId) {
@@ -514,7 +518,9 @@
 
       function selectRegistration(months) {
         if (state.registrationMonths === months) return;
-        state.interacted = true; clearTransientError(); state.registrationMonths = months; renderAll();
+        state.interacted = true; clearTransientError(); state.registrationMonths = months;
+        // 할인 전후 금액이 우연히 같아도 수동 조정은 항상 초기화한다
+        resetFeeAdjustments(); renderAll();
       }
 
       function selectProduct(productId) {
@@ -791,7 +797,12 @@
 
       function renderNotices(input,result) {
         var container=byId("notice-list");clear(container);var notices=result.warnings.concat(state.transientNotices);var registration=input.registrationDiscount;
-        if(registration)notices.push({code:"N-REGISTRATION-DISCOUNT",message:TFCalc.registrationLabel(registration)+"이 적용되었습니다. (가격표 "+TFCalc.formatMoney(input.baseMonthlyFee)+" → "+TFCalc.formatMoney(state.applied.auto)+")"});
+        if(registration){
+          var discountOverridden=input.appliedMonthlyFee!==state.applied.auto;
+          notices.push({code:"N-REGISTRATION-DISCOUNT",message:discountOverridden
+            ?TFCalc.registrationLabel(registration)+"을 선택했지만 적용 요금을 직접 조정했습니다. 할인 적용가 "+TFCalc.formatMoney(state.applied.auto)+" 대신 "+TFCalc.formatMoney(input.appliedMonthlyFee)+"으로 계산합니다."
+            :TFCalc.registrationLabel(registration)+"이 적용되었습니다. (가격표 "+TFCalc.formatMoney(input.baseMonthlyFee)+" → "+TFCalc.formatMoney(state.applied.auto)+")"});
+        }
         if(monthHolidayRecords().length===0)notices.push({code:"N-HOLIDAY-EMPTY",message:"이 달에 등록된 공휴일이 없습니다. holidays.js를 확인해 주세요."});
         if(state.applied.dirty&&state.applied.value!==state.applied.auto)notices.push({code:"N-PRICE-ADJUSTED",message:(registration?"할인 적용가 ":"가격표 ")+TFCalc.formatMoney(state.applied.auto)+" → 적용 "+TFCalc.formatMoney(state.applied.value)+" ("+signedMoney(state.applied.value-state.applied.auto)+")"});
         if(state.final.dirty&&state.final.value!==state.final.auto)notices.push({code:"N-FINAL-ADJUSTED",message:"계산값 "+TFCalc.formatMoney(state.final.auto)+" → 조정 "+TFCalc.formatMoney(state.final.value)+" ("+signedMoney(state.final.value-state.final.auto)+")"});

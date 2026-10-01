@@ -132,7 +132,7 @@
         add("rentals가 배열이 아닙니다.");
       } else {
         var rentalIds = new Set();
-        data.rentals.forEach(function (rental, i) {
+        Array.from(data.rentals).forEach(function (rental, i) {
           var rpath = "rentals[" + i + "]";
           if (!isPlainObject(rental)) { add(rpath + "가 객체가 아닙니다."); return; }
           if (typeof rental.id !== "string" || !rental.id.trim()) add(rpath + ".id가 비어 있습니다.");
@@ -150,7 +150,7 @@
     }
 
     var branchIds = new Set();
-    data.branches.forEach(function (branch, branchIndex) {
+    Array.from(data.branches).forEach(function (branch, branchIndex) {
       var path = "branches[" + branchIndex + "]";
       if (!isPlainObject(branch)) {
         add(path + "가 객체가 아닙니다.");
@@ -167,7 +167,7 @@
           add(path + ".registrationDiscounts가 배열이 아닙니다.");
         } else {
           var discountMonths = new Set();
-          branch.registrationDiscounts.forEach(function (discount, discountIndex) {
+          Array.from(branch.registrationDiscounts).forEach(function (discount, discountIndex) {
             var discountPath = path + ".registrationDiscounts[" + discountIndex + "]";
             if (!isPlainObject(discount)) { add(discountPath + "가 객체가 아닙니다."); return; }
             if (!Number.isInteger(discount.months) || discount.months < 2) add(discountPath + ".months는 2 이상의 정수여야 합니다.");
@@ -182,7 +182,7 @@
         return;
       }
       var productIds = new Set();
-      branch.products.forEach(function (product, productIndex) {
+      Array.from(branch.products).forEach(function (product, productIndex) {
         var productPath = path + ".products[" + productIndex + "]";
         if (!isPlainObject(product)) {
           add(productPath + "가 객체가 아닙니다.");
@@ -199,7 +199,7 @@
             add(productPath + ".allowedWeekdays가 배열이 아닙니다.");
           } else {
             var weekdaySet = new Set(product.allowedWeekdays);
-            if (weekdaySet.size !== product.allowedWeekdays.length || product.allowedWeekdays.some(function (day) {
+            if (weekdaySet.size !== product.allowedWeekdays.length || Array.from(product.allowedWeekdays).some(function (day) {
               return !Number.isInteger(day) || day < 0 || day > 6;
             })) add(productPath + ".allowedWeekdays는 중복 없는 0~6 정수 배열이어야 합니다.");
           }
@@ -521,8 +521,11 @@
       "",
       "가격표 월 기준 요금: " + formatMoney(input.baseMonthlyFee)
     ];
-    if (isValidRegistrationDiscount(input.registrationDiscount)) lines.push("등록 할인: " + registrationLabel(input.registrationDiscount) + " (할인 적용가 " + formatMoney(discountedMonthlyFee(input.baseMonthlyFee, input.registrationDiscount.percent)) + ")");
-    if (input.appliedMonthlyFee !== input.baseMonthlyFee) lines.push("적용 월 기준 요금: " + formatMoney(input.appliedMonthlyFee) + " (" + signedMoney(input.appliedMonthlyFee - input.baseMonthlyFee) + ")");
+    var discount = isValidRegistrationDiscount(input.registrationDiscount) ? input.registrationDiscount : null;
+    var discountedFee = discount ? discountedMonthlyFee(input.baseMonthlyFee, discount.percent) : input.baseMonthlyFee;
+    if (discount) lines.push("등록 할인: " + registrationLabel(discount) + " (할인 적용가 " + formatMoney(discountedFee) + ")");
+    if (discount && input.appliedMonthlyFee !== discountedFee) lines.push("적용 월 기준 요금: " + formatMoney(input.appliedMonthlyFee) + " (할인 적용가 대비 " + signedMoney(input.appliedMonthlyFee - discountedFee) + " 수동 조정)");
+    else if (input.appliedMonthlyFee !== input.baseMonthlyFee) lines.push("적용 월 기준 요금: " + formatMoney(input.appliedMonthlyFee) + " (" + signedMoney(input.appliedMonthlyFee - input.baseMonthlyFee) + ")");
     lines.push("기준 횟수: " + result.baseSessionCount + "회");
     lines.push("회당 금액: " + formatMoney(result.unitFee));
     lines.push("");
@@ -574,12 +577,23 @@
     if (result.regularHolidayExclusions.length) lines.push("- 일반 공휴일 제외: " + result.regularHolidayExclusions.length + "회 (" + formatDateList(result.regularHolidayExclusions, "member") + ")");
     if (result.includedSpecialHolidays.length) lines.push("- 대체·임시공휴일 정상 수업 포함: " + result.includedSpecialHolidays.length + "회 (" + formatDateList(result.includedSpecialHolidays, "member") + ")");
     if (result.manualInclusionsMakeup.length) lines.push("- 보강 수업 포함: " + result.manualInclusionsMakeup.length + "회 (" + formatDateList(result.manualInclusionsMakeup, "member") + ")");
-    if (isValidRegistrationDiscount(input.registrationDiscount)) lines.push("- 등록 할인: " + registrationLabel(input.registrationDiscount) + " 적용");
+    if (isValidRegistrationDiscount(input.registrationDiscount) && result.finalFee === result.subtotal &&
+        input.appliedMonthlyFee === discountedMonthlyFee(input.baseMonthlyFee, input.registrationDiscount.percent)) {
+      lines.push("- 등록 할인: " + registrationLabel(input.registrationDiscount) + " 적용");
+    }
     if (result.overBaseCount > 0) lines.push("- 5주차가 포함되어 기준 " + result.baseSessionCount + "회보다 " + result.overBaseCount + "회 많습니다.");
     if (result.rentalTotal > 0) {
-      lines.push("- 수강료: " + formatMoney(result.computedFee));
-      result.rentals.forEach(function (r) { lines.push("- " + r.label + ": " + formatMoney(r.monthlyFee)); });
-      lines.push("- 합계: " + formatMoney(result.finalFee));
+      /* 최종 결제액을 직접 고친 경우 조정분은 수강료 줄에 반영해 항목 합이 합계와 맞게 한다.
+         (대여 없는 경우 수강료 줄에 최종 결제액을 쓰는 것과 같은 원칙)
+         최종 결제액이 대여비보다 작으면 항목을 나누지 않고 합계만 안내한다. */
+      var memberLessonFee = result.finalFee === result.subtotal ? result.computedFee : result.finalFee - result.rentalTotal;
+      if (memberLessonFee >= 0) {
+        lines.push("- 수강료: " + formatMoney(memberLessonFee));
+        result.rentals.forEach(function (r) { lines.push("- " + r.label + ": " + formatMoney(r.monthlyFee)); });
+        lines.push("- 합계: " + formatMoney(result.finalFee));
+      } else {
+        lines.push("- 합계(대여 포함): " + formatMoney(result.finalFee));
+      }
     } else {
       lines.push("- 수강료: " + formatMoney(result.finalFee));
     }
