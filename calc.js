@@ -162,6 +162,21 @@
       if (typeof branch.name !== "string" || !branch.name.trim()) add(path + ".name이 비어 있습니다.");
       if (typeof branch.sourceTitle !== "string" || !branch.sourceTitle.trim()) add(path + ".sourceTitle이 비어 있습니다.");
       if (!parseDateKey(branch.effectiveFrom)) add(path + ".effectiveFrom이 유효한 날짜가 아닙니다.");
+      if (branch.registrationDiscounts !== undefined) {
+        if (!Array.isArray(branch.registrationDiscounts)) {
+          add(path + ".registrationDiscounts가 배열이 아닙니다.");
+        } else {
+          var discountMonths = new Set();
+          branch.registrationDiscounts.forEach(function (discount, discountIndex) {
+            var discountPath = path + ".registrationDiscounts[" + discountIndex + "]";
+            if (!isPlainObject(discount)) { add(discountPath + "가 객체가 아닙니다."); return; }
+            if (!Number.isInteger(discount.months) || discount.months < 2) add(discountPath + ".months는 2 이상의 정수여야 합니다.");
+            if (discountMonths.has(discount.months)) add("지점 " + branch.id + "의 등록 기간 " + discount.months + "개월이 중복되었습니다.");
+            discountMonths.add(discount.months);
+            if (!Number.isInteger(discount.percent) || discount.percent < 1 || discount.percent > 99) add(discountPath + ".percent는 1~99 정수여야 합니다.");
+          });
+        }
+      }
       if (!Array.isArray(branch.products) || branch.products.length === 0) {
         add(path + ".products에는 상품이 한 개 이상 있어야 합니다.");
         return;
@@ -257,6 +272,20 @@
     return validationResult(errors);
   }
 
+  function isValidRegistrationDiscount(value) {
+    return isPlainObject(value) && Number.isInteger(value.months) && value.months >= 2 &&
+      Number.isInteger(value.percent) && value.percent >= 1 && value.percent <= 99;
+  }
+
+  /* 다개월 등록 할인을 적용한 월 기준 요금. 원 미만은 버린다. */
+  function discountedMonthlyFee(baseMonthlyFee, percent) {
+    return Math.floor(baseMonthlyFee * (100 - percent) / 100);
+  }
+
+  function registrationLabel(discount) {
+    return discount.months + "개월 등록 " + discount.percent + "% 할인";
+  }
+
   function validateInput(input) {
     var errors = [];
     if (!isPlainObject(input)) return validationResult([error("E-MONTH", "계산할 달을 선택해 주세요.")]);
@@ -277,6 +306,9 @@
     if (!Number.isInteger(input.appliedMonthlyFee) || input.appliedMonthlyFee <= 0) errors.push(error("E-PRICE-VALUE", "적용 월 기준 요금은 0보다 큰 정수여야 합니다."));
     if (input.finalFeeOverride !== null && input.finalFeeOverride !== undefined && (!Number.isInteger(input.finalFeeOverride) || input.finalFeeOverride < 0)) {
       errors.push(error("E-FINAL-FEE", "최종 결제액은 0 이상의 정수여야 합니다."));
+    }
+    if (input.registrationDiscount !== null && input.registrationDiscount !== undefined && !isValidRegistrationDiscount(input.registrationDiscount)) {
+      errors.push(error("E-REGISTRATION", "등록 기간 할인 정보가 올바르지 않습니다."));
     }
 
     var excluded = Array.isArray(input.manualExcludedDates) ? input.manualExcludedDates : [];
@@ -489,6 +521,7 @@
       "",
       "가격표 월 기준 요금: " + formatMoney(input.baseMonthlyFee)
     ];
+    if (isValidRegistrationDiscount(input.registrationDiscount)) lines.push("등록 할인: " + registrationLabel(input.registrationDiscount) + " (할인 적용가 " + formatMoney(discountedMonthlyFee(input.baseMonthlyFee, input.registrationDiscount.percent)) + ")");
     if (input.appliedMonthlyFee !== input.baseMonthlyFee) lines.push("적용 월 기준 요금: " + formatMoney(input.appliedMonthlyFee) + " (" + signedMoney(input.appliedMonthlyFee - input.baseMonthlyFee) + ")");
     lines.push("기준 횟수: " + result.baseSessionCount + "회");
     lines.push("회당 금액: " + formatMoney(result.unitFee));
@@ -541,6 +574,7 @@
     if (result.regularHolidayExclusions.length) lines.push("- 일반 공휴일 제외: " + result.regularHolidayExclusions.length + "회 (" + formatDateList(result.regularHolidayExclusions, "member") + ")");
     if (result.includedSpecialHolidays.length) lines.push("- 대체·임시공휴일 정상 수업 포함: " + result.includedSpecialHolidays.length + "회 (" + formatDateList(result.includedSpecialHolidays, "member") + ")");
     if (result.manualInclusionsMakeup.length) lines.push("- 보강 수업 포함: " + result.manualInclusionsMakeup.length + "회 (" + formatDateList(result.manualInclusionsMakeup, "member") + ")");
+    if (isValidRegistrationDiscount(input.registrationDiscount)) lines.push("- 등록 할인: " + registrationLabel(input.registrationDiscount) + " 적용");
     if (result.overBaseCount > 0) lines.push("- 5주차가 포함되어 기준 " + result.baseSessionCount + "회보다 " + result.overBaseCount + "회 많습니다.");
     if (result.rentalTotal > 0) {
       lines.push("- 수강료: " + formatMoney(result.computedFee));
@@ -559,6 +593,8 @@
     validatePriceData: validatePriceData,
     validateHolidayData: validateHolidayData,
     validateInput: validateInput,
+    discountedMonthlyFee: discountedMonthlyFee,
+    registrationLabel: registrationLabel,
     calculate: calculate,
     buildInternalReport: buildInternalReport,
     buildMemberMessage: buildMemberMessage,

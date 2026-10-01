@@ -27,7 +27,7 @@
 <body>
   <main>
     <h1>계산 모듈 자동 테스트</h1>
-    <p>외부 프레임워크와 운영 가격·공휴일 데이터 없이 TC-01~TC-27을 실행합니다.</p>
+    <p>외부 프레임워크와 운영 가격·공휴일 데이터 없이 TC-01~TC-29를 실행합니다.</p>
     <div id="summary" role="status" aria-live="polite">실행 중…</div>
     <div class="table-wrap">
       <table>
@@ -297,25 +297,25 @@
       });
 
       run("TC-25", "월 정액 대여비 합산", function () {
-        var base = {weeklyFrequency:2,selectedWeekdays:[2,4],baseMonthlyFee:340000,appliedMonthlyFee:340000};
+        var base = {weeklyFrequency:2,selectedWeekdays:[2,4],baseMonthlyFee:320000,appliedMonthlyFee:320000};
         var locker = {id:"locker",label:"라커 대여",monthlyFee:10000};
         var racket = {id:"racket",label:"라켓 대여",monthlyFee:10000};
 
         var none = TFCalc.calculate(input(Object.assign({}, base, {rentals:[]})), []);
-        assertEqual("대여 없음 · 수강료", none.computedFee, 382500);
+        assertEqual("대여 없음 · 수강료", none.computedFee, 360000);
         assertEqual("대여 없음 · 대여비", none.rentalTotal, 0);
-        assertEqual("대여 없음 · 합계", none.subtotal, 382500);
-        assertEqual("대여 없음 · 최종", none.finalFee, 382500);
+        assertEqual("대여 없음 · 합계", none.subtotal, 360000);
+        assertEqual("대여 없음 · 최종", none.finalFee, 360000);
 
         var one = TFCalc.calculate(input(Object.assign({}, base, {rentals:[locker]})), []);
         assertEqual("라커만 · 대여비", one.rentalTotal, 10000);
-        assertEqual("라커만 · 합계", one.subtotal, 392500);
+        assertEqual("라커만 · 합계", one.subtotal, 370000);
 
         var both = TFCalc.calculate(input(Object.assign({}, base, {rentals:[locker, racket]})), []);
         assertEqual("라커+라켓 · 대여비", both.rentalTotal, 20000);
-        assertEqual("라커+라켓 · 합계", both.subtotal, 402500);
-        assertEqual("라커+라켓 · 최종", both.finalFee, 402500);
-        assertEqual("수강료는 변하지 않음", both.computedFee, 382500);
+        assertEqual("라커+라켓 · 합계", both.subtotal, 380000);
+        assertEqual("라커+라켓 · 최종", both.finalFee, 380000);
+        assertEqual("수강료는 변하지 않음", both.computedFee, 360000);
         assertEqual("N-RENTAL 안내", both.warnings.some(function (w) { return w.code === "N-RENTAL"; }), true);
         assertEqual("rentals 목록 개수", both.rentals.length, 2);
       });
@@ -336,17 +336,74 @@
       run("TC-27", "대여비가 두 복사 문구에 표시됨", function () {
         var locker = {id:"locker",label:"라커 대여",monthlyFee:10000};
         var inp = input({weeklyFrequency:2,selectedWeekdays:[2,4],
-          baseMonthlyFee:340000,appliedMonthlyFee:340000,
+          baseMonthlyFee:320000,appliedMonthlyFee:320000,
           memberName:"김테니스",adjustmentReason:"내부 메모",rentals:[locker]});
         var res = TFCalc.calculate(inp, []);
-        var meta = {branchName:"방배점",productLabel:"1:1 · 평일",effectiveFrom:"2024-03-16",memberName:"김테니스"};
+        var meta = {branchName:"방배점",productLabel:"정규레슨 1:1 · 평일&주말",effectiveFrom:"2026-10-01",memberName:"김테니스"};
         var internal = TFCalc.buildInternalReport(inp, res, meta);
         var member = TFCalc.buildMemberMessage(inp, res, meta);
         assertEqual("계산 내역에 대여 항목", internal.indexOf("라커 대여") !== -1, true);
-        assertEqual("계산 내역에 합산식", internal.indexOf("대여비 10,000원 = 392,500원") !== -1, true);
+        assertEqual("계산 내역에 합산식", internal.indexOf("대여비 10,000원 = 370,000원") !== -1, true);
         assertEqual("회원 문구에 대여 항목", member.indexOf("- 라커 대여: 10,000원") !== -1, true);
-        assertEqual("회원 문구에 합계", member.indexOf("- 합계: 392,500원") !== -1, true);
+        assertEqual("회원 문구에 합계", member.indexOf("- 합계: 370,000원") !== -1, true);
         assertEqual("회원 문구에 조정 사유 미포함", member.indexOf("내부 메모") === -1, true);
+      });
+
+      run("TC-28", "다개월 등록 할인 요금", function () {
+        // 방배점 정규레슨 가격표: [1개월 정가, 2개월 5% 할인가, 3개월 10% 할인가]
+        [[180000,171000,162000],[320000,304000,288000],[450000,427500,405000],
+         [140000,133000,126000],[240000,228000,216000],[330000,313500,297000]].forEach(function (row) {
+          assertEqual(row[0] + "원 · 2개월 5%", TFCalc.discountedMonthlyFee(row[0], 5), row[1]);
+          assertEqual(row[0] + "원 · 3개월 10%", TFCalc.discountedMonthlyFee(row[0], 10), row[2]);
+        });
+        assertEqual("원 미만 버림", TFCalc.discountedMonthlyFee(100010, 5), 95009);
+        assertEqual("할인 표기", TFCalc.registrationLabel({months:2,percent:5}), "2개월 등록 5% 할인");
+
+        // 주2회 화·목 2026-09 → 유효 9회. 3개월 10%: 288,000 ÷ 8 = 36,000 × 9 = 324,000
+        var discount = {months:3,percent:10};
+        var inp = input({baseMonthlyFee:320000,appliedMonthlyFee:TFCalc.discountedMonthlyFee(320000,10),
+          registrationDiscount:discount,memberName:"김테니스"});
+        var res = TFCalc.calculate(inp, []);
+        assertEqual("할인 회당 금액", res.unitFee, 36000);
+        assertEqual("할인 수강료", res.computedFee, 324000);
+        var meta = {branchName:"방배점",productLabel:"정규레슨 1:1 · 평일&주말",effectiveFrom:"2026-10-01",memberName:"김테니스"};
+        var internal = TFCalc.buildInternalReport(inp, res, meta);
+        var member = TFCalc.buildMemberMessage(inp, res, meta);
+        assertTrue("계산 내역에 등록 할인", internal.indexOf("등록 할인: 3개월 등록 10% 할인 (할인 적용가 288,000원)") !== -1);
+        assertTrue("계산 내역에 가격표 금액", internal.indexOf("가격표 월 기준 요금: 320,000원") !== -1);
+        assertTrue("계산 내역에 적용 요금", internal.indexOf("적용 월 기준 요금: 288,000원 (-32,000원)") !== -1);
+        assertTrue("회원 문구에 등록 할인", member.indexOf("- 등록 할인: 3개월 등록 10% 할인 적용") !== -1);
+        assertTrue("회원 문구 수강료", member.indexOf("- 수강료: 324,000원") !== -1);
+
+        // 할인 미선택이면 두 문구 모두 할인 줄이 없다
+        var plain = input({baseMonthlyFee:320000,appliedMonthlyFee:320000,registrationDiscount:null});
+        var plainRes = TFCalc.calculate(plain, []);
+        assertEqual("정가 수강료", plainRes.computedFee, 360000);
+        assertTrue("정가 계산 내역에 할인 없음", TFCalc.buildInternalReport(plain, plainRes, meta).indexOf("등록 할인") === -1);
+        assertTrue("정가 회원 문구에 할인 없음", TFCalc.buildMemberMessage(plain, plainRes, meta).indexOf("등록 할인") === -1);
+      });
+
+      run("TC-29", "등록 할인 데이터·입력 검증", function () {
+        function data(discounts) {
+          return {schemaVersion:2,currency:"KRW",source:"합성 데이터",updatedAt:"2026-01-01",branches:[
+            {id:"banpo",name:"반포점",sourceTitle:"반포",effectiveFrom:"2026-01-01",products:[{id:"a",label:"A",monthlyFees:{"1":100000}}]},
+            {id:"bangbae",name:"방배점",sourceTitle:"방배",effectiveFrom:"2026-01-01",registrationDiscounts:discounts,products:[{id:"a",label:"A",monthlyFees:{"1":150000}}]}
+          ]};
+        }
+        assertEqual("정상 할인 목록", TFCalc.validatePriceData(data([{months:2,percent:5},{months:3,percent:10}])).ok, true);
+        assertEqual("할인 목록 생략 허용", TFCalc.validatePriceData(data(undefined)).ok, true);
+        assertEqual("배열이 아님", TFCalc.validatePriceData(data({months:2,percent:5})).ok, false);
+        assertEqual("1개월 할인은 불가", TFCalc.validatePriceData(data([{months:1,percent:5}])).ok, false);
+        assertEqual("개월 중복", TFCalc.validatePriceData(data([{months:2,percent:5},{months:2,percent:10}])).ok, false);
+        assertEqual("할인율 0", TFCalc.validatePriceData(data([{months:2,percent:0}])).ok, false);
+        assertEqual("할인율 100", TFCalc.validatePriceData(data([{months:2,percent:100}])).ok, false);
+        assertEqual("할인율 소수", TFCalc.validatePriceData(data([{months:2,percent:2.5}])).ok, false);
+
+        assertEqual("입력 · 할인 없음", TFCalc.validateInput(input({registrationDiscount:null})).ok, true);
+        assertEqual("입력 · 정상 할인", TFCalc.validateInput(input({registrationDiscount:{months:2,percent:5}})).ok, true);
+        var bad = TFCalc.validateInput(input({registrationDiscount:{months:2,percent:150}}));
+        assertEqual("입력 · 잘못된 할인 차단", bad.ok, false);
+        assertTrue("E-REGISTRATION 코드", bad.errors.some(function (item) { return item.code === "E-REGISTRATION"; }));
       });
 
       var body = document.getElementById("results");

@@ -56,6 +56,7 @@
     textarea.control { min-height:76px; resize:vertical; }
     .segments { display:grid; grid-auto-flow:column; grid-auto-columns:1fr; gap:6px; padding:4px; border:1px solid var(--line); border-radius:12px; background:var(--surface-soft); }
     .segment { min-height:37px; border:0; border-radius:8px; color:var(--muted); background:transparent; font-weight:800; }
+    #registration-options .segment { padding:4px 2px; line-height:1.25; word-break:keep-all; }
     .segment[aria-pressed="true"] { color:#fff; background:var(--purple); box-shadow:0 5px 13px rgba(91,54,180,.22); }
     .weekday-grid { display:grid; grid-template-columns:repeat(7,1fr); gap:6px; }
     .weekday { min-height:39px; padding:0; border:1px solid var(--line); border-radius:10px; color:var(--muted); background:var(--surface); font-weight:800; }
@@ -168,7 +169,7 @@
 
       <div class="sample-banner" role="note">
         <strong>확인</strong>
-        <span>Notion 가격표(반포·방배) 전사본이며 운영자 확인을 마쳤습니다. 다만 <strong>평일+주말 혼합</strong> 상품은 요일 구성(평일 N회+주말 M회)을 계산기가 강제하지 않으니 요일을 직접 맞춰 주세요.</span>
+        <span>가격표 전사본입니다(반포점 Notion 공지 · 방배점 2026-10-01 개정 가격표). 반포점의 <strong>평일+주말 혼합</strong> 상품은 요일 구성(평일 N회+주말 M회)을 계산기가 강제하지 않으니 요일을 직접 맞춰 주세요. 방배점은 평일·주말 요금이 같고, <strong>2·3개월 등록 할인</strong>은 「등록 기간」에서 선택합니다.</span>
       </div>
 
       <div class="layout">
@@ -201,6 +202,11 @@
                 <button class="segment" type="button" data-frequency="3" aria-pressed="false" disabled>주 3회</button>
               </div>
               <p class="field-error" id="frequency-error" hidden></p>
+            </div>
+
+            <div class="field" id="registration-field" hidden>
+              <div class="label-row"><span class="label" id="registration-label">4-1. 등록 기간</span><span class="helper" id="registration-helper">가격표는 1개월 등록 기준</span></div>
+              <div class="segments" id="registration-options" role="group" aria-labelledby="registration-label"></div>
             </div>
 
             <div class="field">
@@ -344,11 +350,11 @@
       var fieldByCode = {
         "E-MONTH":"month-error", "E-BRANCH":"branch-error", "E-PRODUCT":"product-error",
         "E-FREQUENCY":"frequency-error", "E-WEEKDAYS":"weekday-error", "E-PRICE-MISSING":"product-error",
-        "E-PRICE-VALUE":"applied-error", "E-FINAL-FEE":"final-error",
+        "E-PRICE-VALUE":"applied-error", "E-FINAL-FEE":"final-error", "E-REGISTRATION":"product-error",
         "E-ADJUST-RANGE":"adjust-error", "E-ADJUST-DUP":"adjust-error"
       };
       var state = {
-        ready:false, interacted:false, branchId:"", productId:"", frequency:null,
+        ready:false, interacted:false, branchId:"", productId:"", frequency:null, registrationMonths:1,
         selectedWeekdays:[], selectedHolidayDates:[], manualExcludedDates:[], manualIncludedDates:[], selectedRentalIds:[],
         applied:{auto:null,value:null,dirty:false,invalid:false},
         final:{auto:null,value:null,dirty:false,invalid:false},
@@ -391,6 +397,18 @@
       function feeForSelection() {
         var product = selectedProduct();
         return product && state.frequency ? product.monthlyFees[String(state.frequency)] : null;
+      }
+      function registrationDiscounts() {
+        var branch = selectedBranch();
+        return branch && Array.isArray(branch.registrationDiscounts) ? branch.registrationDiscounts : [];
+      }
+      function selectedRegistration() {
+        var found = registrationDiscounts().find(function (discount) { return discount.months === state.registrationMonths; });
+        return found ? {months:found.months,percent:found.percent} : null;
+      }
+      function autoAppliedFee() {
+        var fee = feeForSelection(); var registration = selectedRegistration();
+        return fee && registration ? TFCalc.discountedMonthlyFee(fee,registration.percent) : fee;
       }
       function monthHolidayRecords() {
         var month = byId("target-month").value;
@@ -469,8 +487,8 @@
 
       function selectBranch(branchId) {
         if (state.branchId === branchId) return;
-        state.interacted = true; clearTransientError(); state.branchId = branchId; state.productId = "";
-        resetSelectionAfterProductChange(); populateProducts(); renderAll();
+        state.interacted = true; clearTransientError(); state.branchId = branchId; state.productId = ""; state.registrationMonths = 1;
+        resetSelectionAfterProductChange(); populateProducts(); buildRegistrationButtons(); renderAll();
       }
 
       function populateProducts() {
@@ -479,6 +497,24 @@
         var branch = selectedBranch(); select.disabled = !branch;
         if (branch) branch.products.forEach(function (product) { var option=make("option",product.label); option.value=product.id; select.appendChild(option); });
         select.value = "";
+      }
+
+      function buildRegistrationButtons() {
+        var container = byId("registration-options"); clear(container);
+        var discounts = registrationDiscounts();
+        byId("registration-field").hidden = !discounts.length;
+        if (!discounts.length) return;
+        [{months:1,percent:0}].concat(discounts.slice().sort(function (a,b) { return a.months - b.months; })).forEach(function (option) {
+          var button = make("button",option.percent ? option.months + "개월 " + option.percent + "%\u00a0할인" : option.months + "개월 정가","segment");
+          button.type = "button"; button.dataset.registration = String(option.months); button.setAttribute("aria-pressed","false");
+          button.addEventListener("click",function () { selectRegistration(option.months); });
+          container.appendChild(button);
+        });
+      }
+
+      function selectRegistration(months) {
+        if (state.registrationMonths === months) return;
+        state.interacted = true; clearTransientError(); state.registrationMonths = months; renderAll();
       }
 
       function selectProduct(productId) {
@@ -523,13 +559,14 @@
           button.disabled = !product || !state.frequency || !allowed.includes(day) || limitReached;
           button.setAttribute("aria-pressed",String(selected));
         });
+        document.querySelectorAll("[data-registration]").forEach(function (button) { button.setAttribute("aria-pressed",String(Number(button.dataset.registration) === state.registrationMonths)); });
         setText("weekday-helper",state.frequency ? state.selectedWeekdays.length + " / " + state.frequency + "개 선택" : "횟수를 먼저 선택하세요");
         var branch = selectedBranch();
         setText("price-meta",branch ? "가격표 시행일: " + branch.effectiveFrom : "가격표: 지점 선택 전");
       }
 
       function syncFeeAuto() {
-        var auto = feeForSelection();
+        var auto = autoAppliedFee(); var registration = selectedRegistration();
         if (state.applied.auto !== auto) {
           if (state.applied.dirty) addTransientNotice("N-ADJUST-RESET","조정한 적용 요금이 초기화되었습니다.");
           state.applied = {auto:auto,value:auto,dirty:false,invalid:false};
@@ -538,7 +575,8 @@
         if (!state.applied.invalid) appliedInput.value = auto ? formatNumber(state.applied.value) : "";
         byId("reset-applied").hidden = !(state.applied.dirty && state.applied.value !== state.applied.auto);
         var product = selectedProduct();
-        setText("applied-helper",product && product.pricingModel === "perSession" ? "가격표 회당 요금" : "가격표 기준 금액");
+        setText("applied-helper",registration && auto ? "가격표 금액에 " + TFCalc.registrationLabel(registration) + " 적용" : product && product.pricingModel === "perSession" ? "가격표 회당 요금" : "가격표 기준 금액");
+        setText("reset-applied",registration ? "할인 적용가로 되돌리기" : "가격표 금액으로 되돌리기");
       }
 
       function syncDateRange() {
@@ -555,7 +593,7 @@
           pricingModel:product ? (product.pricingModel || "monthly4week") : "monthly4week",
           weeklyFrequency:state.frequency, selectedWeekdays:state.selectedWeekdays.slice().sort(function(a,b){return a-b;}),
           manualExcludedDates:state.manualExcludedDates.slice(), manualIncludedDates:state.manualIncludedDates.slice(),
-          baseMonthlyFee:fee, appliedMonthlyFee:state.applied.value,
+          baseMonthlyFee:fee, appliedMonthlyFee:state.applied.value, registrationDiscount:selectedRegistration(),
           finalFeeOverride:finalOverride, memberName:byId("member-name").value,
           adjustmentReason:byId("adjustment-reason").value,
           rentals:selectedRentals(),
@@ -689,13 +727,15 @@
         setText("valid-count",result.validSessionCount+"회");
         setText("base-delta",result.overBaseCount===0?"기준 "+result.baseSessionCount+"회 일치":"기준 대비 "+(result.overBaseCount>0?"+":"")+result.overBaseCount+"회");
         var adjustments=[];
-        if(input.appliedMonthlyFee!==input.baseMonthlyFee) adjustments.push("가격표 "+TFCalc.formatMoney(input.baseMonthlyFee)+" → 적용 "+TFCalc.formatMoney(input.appliedMonthlyFee)+" ("+signedMoney(input.appliedMonthlyFee-input.baseMonthlyFee)+")");
+        var registration=input.registrationDiscount; var autoFee=registration?TFCalc.discountedMonthlyFee(input.baseMonthlyFee,registration.percent):input.baseMonthlyFee;
+        if(registration) adjustments.push("가격표 "+TFCalc.formatMoney(input.baseMonthlyFee)+" → "+TFCalc.registrationLabel(registration)+" "+TFCalc.formatMoney(autoFee)+" ("+signedMoney(autoFee-input.baseMonthlyFee)+")");
+        if(input.appliedMonthlyFee!==autoFee) adjustments.push((registration?"할인 적용가 ":"가격표 ")+TFCalc.formatMoney(autoFee)+" → 적용 "+TFCalc.formatMoney(input.appliedMonthlyFee)+" ("+signedMoney(input.appliedMonthlyFee-autoFee)+")");
         if(result.finalFee!==result.subtotal) adjustments.push("계산값 "+TFCalc.formatMoney(result.subtotal)+" → 조정 "+TFCalc.formatMoney(result.finalFee)+" ("+signedMoney(result.finalFee-result.subtotal)+")");
         byId("adjust-summary").hidden=!adjustments.length; setText("adjust-summary",adjustments.join(" · "));
-        renderNotices(result); renderCalendar(input,result); renderHolidayList(input,result);
+        renderNotices(input,result); renderCalendar(input,result); renderHolidayList(input,result);
         var branch=selectedBranch(), product=selectedProduct();
         setText("period-display",TFCalc.formatDate(result.periodStart)+" ~ "+TFCalc.formatDate(result.periodEnd));
-        setText("product-display",branch.name+" · "+product.label+" · "+branch.effectiveFrom);
+        setText("product-display",branch.name+" · "+product.label+" · "+branch.effectiveFrom+(registration?" · "+TFCalc.registrationLabel(registration):""));
         setText("price-display",TFCalc.formatMoney(input.baseMonthlyFee)+" · "+TFCalc.formatMoney(input.appliedMonthlyFee));
         setText("unit-display",result.baseSessionCount+"회 · "+TFCalc.formatMoney(result.unitFee));
         setDetail("scheduled",result.scheduledDates,"예정 수업일");
@@ -749,10 +789,11 @@
           +"\n"+"수강료 "+TFCalc.formatMoney(result.computedFee)+" + 대여비 "+TFCalc.formatMoney(result.rentalTotal)+" = "+TFCalc.formatMoney(result.subtotal);
       }
 
-      function renderNotices(result) {
-        var container=byId("notice-list");clear(container);var notices=result.warnings.concat(state.transientNotices);
+      function renderNotices(input,result) {
+        var container=byId("notice-list");clear(container);var notices=result.warnings.concat(state.transientNotices);var registration=input.registrationDiscount;
+        if(registration)notices.push({code:"N-REGISTRATION-DISCOUNT",message:TFCalc.registrationLabel(registration)+"이 적용되었습니다. (가격표 "+TFCalc.formatMoney(input.baseMonthlyFee)+" → "+TFCalc.formatMoney(state.applied.auto)+")"});
         if(monthHolidayRecords().length===0)notices.push({code:"N-HOLIDAY-EMPTY",message:"이 달에 등록된 공휴일이 없습니다. holidays.js를 확인해 주세요."});
-        if(state.applied.dirty&&state.applied.value!==state.applied.auto)notices.push({code:"N-PRICE-ADJUSTED",message:"가격표 "+TFCalc.formatMoney(state.applied.auto)+" → 적용 "+TFCalc.formatMoney(state.applied.value)+" ("+signedMoney(state.applied.value-state.applied.auto)+")"});
+        if(state.applied.dirty&&state.applied.value!==state.applied.auto)notices.push({code:"N-PRICE-ADJUSTED",message:(registration?"할인 적용가 ":"가격표 ")+TFCalc.formatMoney(state.applied.auto)+" → 적용 "+TFCalc.formatMoney(state.applied.value)+" ("+signedMoney(state.applied.value-state.applied.auto)+")"});
         if(state.final.dirty&&state.final.value!==state.final.auto)notices.push({code:"N-FINAL-ADJUSTED",message:"계산값 "+TFCalc.formatMoney(state.final.auto)+" → 조정 "+TFCalc.formatMoney(state.final.value)+" ("+signedMoney(state.final.value-state.final.auto)+")"});
         var seen=new Set();notices.forEach(function(notice){var key=notice.code+notice.message;if(seen.has(key))return;seen.add(key);var item=make("div",notice.message,"notice "+(notice.code.includes("RESET")||notice.code.includes("ROUNDED")?"warn":""));item.dataset.noticeCode=notice.code;container.appendChild(item);});
       }
@@ -827,7 +868,7 @@
 
       function nextMember() {
         byId("member-name").value="";byId("adjustment-reason").value="";state.applied={auto:state.applied.auto,value:state.applied.auto,dirty:false,invalid:false};
-        state.selectedRentalIds=[];
+        state.selectedRentalIds=[];state.registrationMonths=1;
         state.final={auto:state.final.auto,value:state.final.auto,dirty:false,invalid:false};state.transientNotices=[];clearTransientError();setText("copy-status","");byId("copy-fallback").hidden=true;renderAll();byId("member-name").focus();
       }
 
